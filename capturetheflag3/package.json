@@ -1,0 +1,19 @@
+{
+  "name": "capturetheflag",
+  "version": "1.0.0",
+  "description": "2 player capture the flag game",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "author": "Benjamin Kovacs",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.14.0",
+    "http": "0.0.0",
+    "path": "^0.12.7",
+    "socket.io": "^1.5.0",
+    "use-strict": "^1.0.1"
+  }, "engines": {    "node": "6.3.0"  }
+}

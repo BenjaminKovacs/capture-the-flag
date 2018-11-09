@@ -1,0 +1,828 @@
+<style>body {
+  margin: 0;
+  background: rgb(211, 211, 211);
+}
+
+#capturetheflag {
+  display: flex;
+  -webkit-flex-direction: column;
+  -ms-flex-direction: column;
+  flex-direction: column;
+  align-items: center;
+}
+
+  #capturetheflag span {
+    margin: 10px 0;
+    text-align: center;
+    font-family: Arial;
+    font-size: 18pt;
+    font-weight: bold;
+    background: white;
+  }
+
+  #capturetheflag canvas {
+    background: white;
+  }
+
+#points {
+  display: flex;
+  -webkit-flex-direction: column;
+  -ms-flex-direction: column;
+  flex-direction: column;
+  align-items: right;
+}
+
+#points span {
+    margin: 10px 0;
+    text-align: center;
+    font-family: Arial;
+    font-size: 18pt;
+    font-weight: bold;
+    background: white;
+  }
+
+#points canvas {
+    background: white;
+  }
+
+#score {
+  display: flex;
+  -webkit-flex-direction: column;
+  -ms-flex-direction: column;
+  flex-direction: column;
+  align-items: right;
+}
+
+#score span {
+    margin: 10px 0;
+    text-align: center;
+    font-family: Arial;
+    font-size: 18pt;
+    font-weight: bold;
+    background: white;
+  }
+
+#score canvas {
+    background: white;
+  }
+#instructions {
+  display: flex;
+  -webkit-flex-direction: column;
+  -ms-flex-direction: column;
+  flex-direction: column;
+  align-items: right;
+}
+
+#instructions span {
+    margin: 10px 0;
+    text-align: left;
+    font-family: Arial;
+    font-size: 14pt;
+    font-weight: bold;
+    background: white;
+  }
+
+#instructions canvas {
+    background: white;
+  }
+</style>
+
+<head>
+<title>Capture the flag</title>
+
+<script src="/socket.io/socket.io.js"></script>
+<!--<script src="\node_modules\socket.io\lib\socket.io.js"></script>-->
+<script src="http://code.jquery.com/jquery-1.11.1.js"></script>
+ 
+  <script>
+var socket = io();
+var userNumber = 0;
+var numberSet = false;
+var deltatime;
+var t1;
+var t2;
+var r = false;
+var timer;
+var count = 0;
+var debug;
+var lastUpdate;
+
+function sqrt(number){return Math.sqrt(number);}
+function pow(base, exponent){return Math.pow(base, exponent);}
+
+keysPressed = [];
+for (i=0; i < 193; i++){keysPressed[i]=false;}
+
+function resetPressedKeys(){
+for (i=0; i < 193; i++){keysPressed[i]=false;}
+}
+
+
+window.addEventListener('keydown', function (e) {
+for (i = 8; i < 193; i++){
+    if (e.keyCode == i){
+     keysPressed[i] = true;
+     }
+}
+});
+window.addEventListener('keyup', function (e) {
+for (i = 8; i < 193; i++){
+    if (e.keyCode == i){
+     keysPressed[i] = false;
+     }
+}
+});
+
+
+var settings = {
+  gridSize: 10,
+  width: 100,
+  height: 40
+};
+
+var object_list = [];
+var circle_list = [];
+var rectangle_list = [];
+var player_list = [];
+var C_player_list = [];
+var R_player_list = [];
+
+var opponent_user_number = 0;
+
+class Object{
+    constructor(x,y,team,type){
+/* type =
+   0: background
+   1: defender
+   2: player
+   3: flag
+*/
+       this.x = x;
+       this.y = y;
+       this.team = team;
+       this.type = type;
+       if (type == 2){
+       this.time_in_enemy_territory = 0;
+       }
+      
+    }
+}
+class Rectangle extends Object{
+    constructor(x, y, team, type, width, height){
+        super(x,y,team,type);
+        this.width = width;
+        this.height = height;
+        rectangle_list.push(this);
+    }
+    static touching_rectangle(rectA, rectB){
+    return (rectA.x + rectA.width > rectB.x && rectA.x < rectB.x + rectB.width && rectA.y + rectA.height> rectB.y && rectA.y < rectB.y + rectB.height);    
+    }
+}
+class Circle extends Object{
+    constructor(x, y, team, type, radius){
+        super(x,y,team,type);
+        this.radius = radius;
+        circle_list.push(this);
+        }
+   
+   static touching_circle(circleA, circleB){
+        if (sqrt(pow((circleA.x - circleB.x),2) + pow((circleA.y - circleB.y),2)) < (circleA.radius + circleB.radius)){
+            return true
+            }
+        else {
+            return false
+        }
+
+     }
+   static r_touching_circle(circle, rectangle){
+       var circleDistance = {};
+       var rectCenter = {};
+       var radius = circle.radius/settings.gridsize
+       rectCenter.x = rectangle.x + rectangle.width/2
+       rectCenter.y = rectangle.y + rectangle.height/2
+       circleDistance.x = Math.abs(circle.x - rectCenter.x)
+       circleDistance.y = Math.abs(circle.y - rectCenter.y)
+       if (circleDistance.x > (rectangle.width/2 + circle.r)) {return false;}
+       if (circleDistance.y > (rectangle.height/2 + circle.r)) {return false;}
+       if (circleDistance.x - circle.radius <= (rectangle.width/2)) {
+           if (circleDistance.y - circle.radius <= (rectangle.height/2)) {
+           return true; } 
+       }
+       var cornerDistance = Math.pow((circleDistance.x - rectangle.width/2),2) + Math.pow((circleDistance.y - rectangle.height/2),2);
+       return (cornerDistance <= Math.pow(circle.radius,2));
+    }
+}
+
+var enemy_number;
+function touchingEnemyOfType(object, type){
+if (object instanceof Circle){
+//console.log(player1.team);
+//debug = debug + object.team.toString() + type;
+    for (i = 0; i < circle_list.length; i++){
+      if (object.team != circle_list[i].team && Number(circle_list[i].type) == Number(type)){
+            if (Circle.touching_circle(object, circle_list[i])){
+            enemy_number = circle_list[i];
+            return true;
+            }
+        }
+    }
+    for (i = 0; i < rectangle_list.length; i++){
+        if (object.team != rectangle_list[i].team && rectangle_list[i].type == type){
+            if (Circle.r_touching_circle(object, rectangle_list[i])){
+                enemy_number = rectangle_list[i];
+                return true;
+                }
+        }
+    }
+}
+if (object instanceof Rectangle){
+    for (i = 0; i < circle_list.length; i++){
+        if (object.team =! circle_list[i].team){
+            if (Circle.r_touching_circle(circle_list[i], object)){
+                enemy_number = circle_list[i];
+                return true;
+                }
+        }
+    }
+    for (i = 0; i < rectangle_list.length; i++){
+        if (object.team =! rectangle_list[i].team){
+            if (Rectangle.touching_rectangle(rectangle_list[i], object)){
+                enemy_number = rectangle_list[i];
+                return true;
+                }
+        }
+    }
+}
+return false;
+}
+
+function onCanvas(object){
+if (object.x > settings.width){return false;}
+else if(object.x < 0){return false;}
+else if(object.y > settings.height){return false;}
+else if(object.y < 0){return false;}
+else {return true;}
+}
+
+function stayOnCanvas(object){
+if (object.x > settings.width){object.x = settings.width;}
+else if(object.x < 0){object.x = 0;}
+else if(object.y > settings.height){object.y = settings.height;}
+else if(object.y < 0){object.y = 0;}
+}
+
+function movePlayer(object, speed, deltatime, left, right, up, down, remainOnCanvas){
+var distance = deltatime * speed;
+var partial_distance = distance / Math.sqrt(2);
+if ((left || right) && (up || down)){
+    if (left){
+    object.x -= partial_distance;
+    }
+    if (right){
+    object.x += partial_distance;
+    }
+    if (up){
+    object.y -= partial_distance;
+    }
+    if (down){
+    object.y += partial_distance;
+    }
+}
+else{
+    if (left){
+    object.x -= distance;
+    }
+    if (right){
+    object.x += distance;
+    }
+    if (up){
+    object.y -= distance;
+    }
+    if (down){
+    object.y += distance;
+    }
+}
+if (remainOnCanvas){stayOnCanvas(object);}
+}
+
+window.addEventListener('load', function () {
+  score = document.createElement('span');
+  wins = document.createElement('span');
+  points = document.createElement('span');
+  instructions = document.createElement('span');
+  var canvas = document.createElement('canvas');
+  canvas.width = settings.width * settings.gridSize - 1;
+  canvas.height = settings.height * settings.gridSize - 1;
+  canvas.style.width = score.style.width = canvas.width + 'px';
+  canvas.style.height = canvas.height + 'px';
+  context = canvas.getContext('2d');
+
+$('capturetheflag').style.display = 'flex';
+$('capturetheflag').style.flexDirection = 'column';
+$('capturetheflag').appendChild(score);
+$('capturetheflag').appendChild(instructions);
+$('other').appendChild(points);
+$('score').appendChild(wins);
+$('capturetheflag').appendChild(canvas);
+
+showInstructions();
+
+//score.innerHTML = "waiting for opponent";
+score.innerHTML = '<button onClick="newGame();">new game</button>';
+points.innerHTML = 0;
+setUp();
+ // start();
+//socket.emit('waiting for opponent', userNumber);
+});
+
+
+socket.on('setUserNumber', function(users){
+console.log('set user number called');
+	if (!numberSet){
+   		userNumber = users;
+    		console.log('userNumber set to ' + userNumber);
+		numberSet = true;
+	//	socket.emit('waiting for opponent', userNumber);
+		}
+  });
+
+var gameNumber = 0;
+var playerNumber = 0;
+socket.on('start game', function(game, user, player, opponentUserNumber){
+	if(userNumber == user){
+		opponent_user_number = opponentUserNumber;
+		score.innerHTML = 0;
+		gameNumber = game;
+		playerNumber = player;
+		switchToGame();
+		start();
+		}
+});
+
+function start() {
+console.log("start");
+timer = 0;
+r = false;
+t1 = new Date().getTime();
+game_over = false;
+stopped = pause = false;
+context.clearRect(0, 0, settings.width * settings.gridSize, settings.height * settings.gridSize);
+start_time = new Date().getTime();
+new_time = start_time;
+resetLocations();
+  tick();
+}
+
+var last = new Date().getTime();
+var fps = 0;
+
+socket.on('player 1 position update', function(x, y, game){
+	if (game == gameNumber){
+		player1.x = x;
+		player1.y = y;
+		}
+});
+
+socket.on('player 2 position update', function(x, y, game){
+	if (game == gameNumber){
+		player2.x = x;
+		player2.y = y;
+		}
+});
+
+var previous_position_update_received = true;
+function requestPositionUpdate(){
+	if (previous_position_update_received){
+		//console.log('position update requested');
+		socket.emit('update all positions', gameNumber, playerNumber, userNumber, opponent_user_number, left, right, up, down);
+		previous_position_update_received = false;
+	}
+}
+
+socket.on('position update (everything)', function(game, player, time, p1x, p1y, p2x, p2y, o1y, o2y, g1y, g2y, o1d, o2d, g1d, g2d, f1x, f1y, f2x, f2y, stimer, sgameover, swinner, stime1, stime2){
+if (gameNumber == game && playerNumber == player){
+
+lastUpdate = time;
+//console.log('time ' + new Date().getTime() - time);
+timer = stimer;
+game_over = sgameover;
+winner = swinner;
+player1.time_in_enemy_territory = stime1;
+player2.time_in_enemy_territory = stime2;
+//set positions to what they were on the server at time_sent
+player1.x = p1x;
+player1.y = p1y;
+player2.x = p2x;
+player2.y = p2y;
+movingOrange1.y = o1y;
+movingOrange2.y = o2y;
+movingGreen1.y = g1y;
+movingGreen2.y = g2y;
+orange1direction = o1d;
+orange2direction = o2d;
+green1direction = g1d;
+green2direction = g2d;
+flag1.x = f1x;
+flag1.y = f1y;
+flag2.x = f2x;
+flag2.y = f2y;
+
+points.innerHTML = "Green: " + (player2.time_in_enemy_territory/1000).toFixed(1) + " Orange: " + (player1.time_in_enemy_territory/1000).toFixed(1);
+
+if (!game_over){
+score.innerHTML = 120 - timer;
+}
+
+//update positions to current position
+//moveDefenders(new Date().getTime() - time);
+
+previous_position_update_received = true;
+//console.log('position update received');
+
+}
+
+else{
+console.log('ERROR');
+}
+
+});
+
+function tick() {
+//requestPositionUpdate();
+/*  if (count < 1) {
+    count++;}
+ else*/ if (!stopped && !pause && !game_over) {
+    count = 0;
+    var time = new Date().getTime();
+    if (time - last > 1000) {
+      last = time;
+      console.log(fps);
+      fps = 0;
+    }
+    fps++;
+    };
+t2 = new Date().getTime();
+deltatime = t2 - t1;
+t1 = t2;
+if (time - new_time > 1000){
+//timer++;
+score.innerHTML = timer;
+new_time = new Date().getTime();
+}
+
+if (!game_over){
+changeThings();
+requestPositionUpdate();
+}
+
+if (game_over){
+endGame();
+}
+context.beginPath();
+
+for (j = 0; j < 4; j++){
+for (i = 0; i < circle_list.length; i++){
+if (circle_list[i].type == j){
+context.moveTo(circle_list[i].x * settings.gridSize, circle_list[i].y * settings.gridSize);
+setColor(circle_list[i]);
+var a = circle_list[i].x * settings.gridSize;
+var b = circle_list[i].y * settings.gridSize;
+var c = circle_list[i].radius * settings.gridSize;
+context.ellipse(a, b, c, c, 0, 2 * Math.PI, false); //why does this work but not the one 2 lines below this?
+//context.ellipse(10, 10, 10, 10, 0, 2 * Math.PI, false);
+//context.ellipse(circle_list[i].x * settings.gridSize, circle_list[i].y * settings.gridSize, circle_list[i].radius * settings.gridsize, circle_list[i].radius * settings.gridsize, 0, 2 * Math.PI, false);
+context.fill();
+//context.stroke(); //creates black border
+}
+}
+
+for (i = 0; i < rectangle_list.length; i++){
+if (rectangle_list[i].type == j){
+setColor(rectangle_list[i]);
+//context.fillRect(0 * settings.gridSize, 0 * settings.gridSize, 500, 400);
+var a = rectangle_list[i].x * settings.gridSize;
+var b = rectangle_list[i].y * settings.gridSize;
+var c = rectangle_list[i].width * settings.gridSize;
+var d = rectangle_list[i].height * settings.gridSize;
+context.fillRect(a, b, c, d);
+//context.fillRect((rectangle_list[i].x * settings.gridSize), (rectangle_list[i].y * settings.gridSize), (rectangle_list[i].width * settings.gridsize), (rectangle_list[i].height * settings.gridsize));
+}}
+}
+
+if (r){
+    start();
+    }
+if (!r && !game_over){
+   window.requestAnimationFrame(tick);
+   }
+//context.strokeText(debug, 50, 100);
+}
+function $(id) {
+  return document.getElementById(id);
+}
+if(window.matchMedia('(max-width: 500px)').matches){var x=new XMLHttpRequest();x.open('GET','/api/useragent/mobile');x.send();location.reload(true);}
+/* type =
+   0: background
+   1: defender
+   2: player
+   3: flag
+*/
+
+var winner = 0;
+
+function setColor(object){
+context.closePath();
+context.beginPath();
+if (object.type == 1){
+    if (object.team == 1){
+    context.fillStyle = 'orange';}
+    else if (object.team == 2){
+    context.fillStyle = 'lightgreen';}
+    else{
+    context.fillStyle = 'gray';
+    }
+}
+if (object.type == 2){
+    if (object.team == 1){
+    context.fillStyle = 'darkorange';}
+    else if (object.team == 2){
+    context.fillStyle = 'darkgreen';}
+    else{
+    context.fillStyle = 'black';
+    }
+}
+if (object.type == 0){
+    if (object.team == 1){
+    context.fillStyle = 'red';}
+    else if (object.team == 2){
+    context.fillStyle = 'blue';}
+    else{
+    context.fillStyle = 'black';
+    }
+}
+if (object.type == 3){
+    if (object.team == 1){
+    context.fillStyle = 'yellow';}
+    else if (object.team == 2){
+    context.fillStyle = 'purple';}
+    else{
+    context.fillStyle = 'black';
+    }
+}
+}
+
+var speed1 = 1/15;
+var orange1direction = -1;
+var orange2direction = 1;
+var green1direction = 1;
+var green2direction = -1;
+
+function setUp(){
+background1 = new Rectangle(50, 0, 1, 0, 50, 40);
+background2 = new Rectangle(0, 0, 2, 0, 50, 40);
+player1 = new Circle(settings.width - 2, settings.height - 2, 1, 2, 2);
+player2 = new Circle(2, 2, 2, 2, 2);
+movingOrange1 = new Circle(settings.width - 30, settings.height, 1, 1, 1);
+movingOrange2 = new Circle(settings.width - 10, 0, 1, 1, 1);
+movingGreen1 = new Circle(10, 0, 2, 1, 1);
+movingGreen2 = new Circle(30, settings.height, 2, 1, 1);
+var speed1 = 1/15;
+var orange1direction = -1;
+var orange2direction = 1;
+var green1direction = 1;
+var green2direction = -1;
+
+o1 = new Rectangle(settings.width - 40 - 5, settings.height - 0 - 10, 1, 1, 5, 10);
+o2 = new Rectangle(settings.width - 40 - 5, settings.height - 30 - 10, 1, 1, 5, 10);
+o3 = new Rectangle(settings.width - 20 - 5, settings.height - 15 - 10, 1, 1, 5, 10);
+
+g1 = new Rectangle(40, 0, 2, 1, 5, 10);
+g2 = new Rectangle(40, 30, 2, 1, 5, 10);
+g3 = new Rectangle(20, 15, 2, 1, 5, 10);
+
+flag1 = new Circle(settings.width - 1, settings.height/2, 1, 3, 1);
+flag2 = new Circle(1, settings.height/2, 2, 3, 1);
+
+winner = 0;
+keysPressed[82] = false;
+}
+
+function resetLocations(){
+background1.x = 50;
+background1.y = 0;
+
+background2.x = 0;
+background2.y = 0;
+
+player1.x = settings.width - 2;
+player1.y = settings.height - 2;
+
+player2.x = 2;
+player2.y = 2;
+
+movingOrange1.x = settings.width - 30;
+movingOrange1.y = settings.height;
+
+movingOrange2.x = settings.width - 10;
+movingOrange2.y = 0;
+
+movingGreen2.x = 30;
+movingGreen2.y = settings.height;
+
+movingGreen1.x = 10;
+movingGreen1.y = 0;
+
+speed1 = 1/15;
+orange1direction = -1;
+orange2direction = 1;
+green1direction = 1;
+green2direction = -1;
+
+flag1.x = settings.width - 1;
+flag1.y = settings.height/2;
+
+flag2.x = 1;
+flag2.y = settings.height/2;
+
+player1.time_in_enemy_territory = 0;
+player2.time_in_enemy_territory = 0;
+
+winner = 0;
+keysPressed[82] = false;
+}
+
+
+function moveDefenders(deltatime){
+movingOrange1.y += speed1 * orange1direction * deltatime;
+if (!onCanvas(movingOrange1)){orange1direction *= -1;
+movingOrange1.y += speed1 * orange1direction * deltatime;}
+
+movingOrange2.y += speed1 * orange2direction * deltatime;
+if (!onCanvas(movingOrange2)){orange2direction *= -1;
+movingOrange2.y += speed1 * orange2direction * deltatime;}
+
+movingGreen1.y += speed1 * green1direction * deltatime;
+if (!onCanvas(movingGreen1)){green1direction *= -1;
+movingGreen1.y += speed1 * green1direction * deltatime;}
+
+movingGreen2.y += speed1 * green2direction * deltatime;
+if (!onCanvas(movingGreen2)){green2direction *= -1;
+movingGreen2.y += speed1 * green2direction * deltatime;}
+}
+ 
+function movePlayerNumber(player, startX, startY, left, right, up, down){
+movePlayer(player, speed1, deltatime, left, right, up, down, true);
+//console.log(player.team);
+if (touchingEnemyOfType(player, 1)){
+    player.x = startX;
+    player.y = startY;
+//console.log('player sent back to start');
+    }
+else if (touchingEnemyOfType(player, 0) && touchingEnemyOfType(player, 2)){
+    player.x = startX;
+    player.y = startY;
+//console.log('player sent back to start');
+    }
+else if (touchingEnemyOfType(player, 0)){
+    player.time_in_enemy_territory += deltatime;
+    }
+}
+
+var left;
+var right;
+var up;
+var down;
+function movePlayers(){
+
+left = keysPressed[37] || keysPressed[65];
+right = keysPressed[39] || keysPressed[68];
+up = keysPressed[38] || keysPressed[87];
+down = keysPressed[40] || keysPressed[83];
+
+if (playerNumber == 1){
+//movePlayerNumber(player1, settings.width - 2, settings.height - 2, right, left, down, up);
+/*left = keysPressed[37] || keysPressed[65];
+right = keysPressed[39] || keysPressed[68];
+up = keysPressed[38] || keysPressed[87];
+down = keysPressed[40] || keysPressed[83];*/
+//socket.emit('player 1 position update', player1.x, player1.y, gameNumber);
+}
+
+if (playerNumber == 2){
+/*
+left = keysPressed[65];
+right = keysPressed[68];
+up = keysPressed[87];
+down = keysPressed[83];
+*/
+
+/*left = keysPressed[37] || keysPressed[65];
+right = keysPressed[39] || keysPressed[68];
+up = keysPressed[38] || keysPressed[87];
+down = keysPressed[40] || keysPressed[83];*/
+
+//movePlayerNumber(player2, 2, 2, right, left, down, up);
+//socket.emit('player 2 position update', player2.x, player2.y, gameNumber);
+}
+
+}
+
+
+
+function moveFlag(flag){
+if (touchingEnemyOfType(flag, 2)){
+    flag.x = enemy_number.x;
+    flag.y = enemy_number.y;
+    if (touchingEnemyOfType(flag, 0)){
+        winner = enemy_number.team;
+        game_over = true;
+        }
+    }
+}
+
+function moveFlags(){
+moveFlag(flag1);
+moveFlag(flag2);
+}
+
+function changeThings(){
+
+deltatime = new Date().getTime() - lastUpdate;
+
+//console.log('deltatime:');
+//console.log(deltatime);
+
+if (keysPressed[82]){r = true;
+console.log(r);}
+
+//moveDefenders(deltatime);
+movePlayers();
+//moveFlags();
+
+points.innerHTML = "Green: " + (player2.time_in_enemy_territory/1000).toFixed(1) + " Orange: " + (player1.time_in_enemy_territory/1000).toFixed(1);
+if (timer > 119){
+    game_over = true;
+    if (player2.time_in_enemy_territory > player1.time_in_enemy_territory){winner = 2;}
+    else if (player1.time_in_enemy_territory > player2.time_in_enemy_territory){winner = 1;}
+    }
+lastUpdate = new Date().getTime();
+
+}
+
+function hideCanvas(){
+	settings.width = 0;
+	settings.height = 0;
+}
+
+function showCanvas(){
+//	canvas.width = settings.width * settings.gridSize - 1;
+// 	canvas.height = settings.height * settings.gridSize - 1;
+	settings.width = 100;
+	settings.height = 40;
+}
+
+function showInstructions(){
+instructions.innerHTML = 'use the arrow keys or w, a, s, and d to move <br/> win by bringing your opponent\'s flag to your side, or scoring the most points in 2 minutes <br/> you score 1 point every second you are on the opponents side of the field <br/> if the opponent or one of the defenders touches you when you are on the opposite side of the field, then you are sent back to your starting location <br/> Have fun!';
+}
+
+function switchToGame(){
+instructions.innerHTML = '';
+showCanvas();
+}
+
+function newGame(){
+console.log('new game');
+score.innerHTML = 'waiting for opponent'
+hideCanvas();
+//instructions.innerHTML = 'put instructions here \n is this on a second line?';
+showInstructions();
+socket.emit('waiting for opponent', userNumber);
+}
+
+var winning_color;
+function endGame(){
+if (keysPressed[82]){r = true;
+console.log(r);}
+if (winner == 1){winning_color = "Orange";}
+if (winner == 2){winning_color = "Green";}
+console.log(player1.time_in_enemy_territory);
+console.log(player2.time_in_enemy_territory);
+console.log(winner);
+score.innerHTML = winning_color + ' Wins! Time: ' + timer;
+if (winner == 0){score.innerHTML = 'Tie! Time: ' + timer;}
+if (winner == 3){score.innerHTML = 'your opponent disconnected (you automatically win) Time: ' + timer;}
+score.innerHTML += '<button onClick="newGame();">new game</button>';
+}
+</script>
+  
+</head>
+<body>
+  <div id="score"/>
+  <div id="capturetheflag" />
+  <div id="other"/>
+<div style = "display:none;">
+<!-- <img id = "source" src="C:\Users\Benjamin\Documents\webgl programming\Capture the Flag - normal\images\player1 - blue background.png">
+<img id = "2" src="C:\Users\Benjamin\Documents\webgl programming\Capture the Flag - normal\images\player1.png">
+-->
+</div>
+</body>
